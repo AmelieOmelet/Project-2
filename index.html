@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orbital Drift: Asteroids</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Audiowide&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="nebula-bg" aria-hidden="true"></div>
+    <main class="layout">
+      <header class="hero">
+        <p class="eyebrow">Arcade Clone Project</p>
+        <h1>Orbital Drift</h1>
+        <p class="subtitle">
+          Navigate deep space, dodge rubble, and blast every asteroid before your hull gives out.
+        </p>
+        <div class="legend">
+          <span><kbd>A</kbd> <kbd>D</kbd> Rotate</span>
+          <span><kbd>W</kbd> Thrust</span>
+          <span><kbd>Space</kbd> or <kbd>↓</kbd> Fire</span>
+          <span><kbd>Enter</kbd> Restart</span>
+        </div>
+      </header>
+
+      <section class="game-shell" aria-label="Asteroids game area">
+        <div class="hud" role="status" aria-live="polite">
+          <div>Score <strong id="score">0</strong></div>
+          <div>Lives <strong id="lives">3</strong></div>
+          <div>Level <strong id="level">1</strong></div>
+          <div class="hint" id="status">Clear the field.</div>
+        </div>
+        <canvas id="gameCanvas" width="960" height="540"></canvas>
+
+        <div class="mobile-controls" aria-label="Touch controls">
+          <button id="leftBtn" type="button" aria-label="Rotate left">⟲</button>
+          <button id="thrustBtn" type="button" aria-label="Thrust">▲</button>
+          <button id="rightBtn" type="button" aria-label="Rotate right">⟳</button>
+          <button id="fireBtn" type="button" aria-label="Shoot">FIRE</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="game.js"></script>
+  </body>
+</html>
