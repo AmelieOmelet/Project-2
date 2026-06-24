@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Orbital Drift: Asteroids</title>
+    <title>Constellation Drift: Asteroids</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,17 +17,27 @@
     <main class="layout">
       <header class="hero">
         <p class="eyebrow">Arcade Clone Project</p>
-        <h1>Orbital Drift</h1>
+        <h1>Constellation Drift</h1>
         <p class="subtitle">
           Navigate deep space, dodge rubble, and blast every asteroid before your hull gives out.
         </p>
         <div class="legend">
-          <span><kbd>A</kbd> <kbd>D</kbd> Rotate</span>
-          <span><kbd>W</kbd> Thrust</span>
-          <span><kbd>Space</kbd> or <kbd>↓</kbd> Fire</span>
+          <span><kbd>←</kbd> <kbd>→</kbd> or <kbd>A</kbd> <kbd>D</kbd> Move Left/Right</span>
+          <span><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>W</kbd> <kbd>S</kbd> Move Up/Down</span>
+          <span><kbd>Space</kbd> Fire Dual Missiles</span>
+          <span>Collect Shield Orbs for 5s immunity</span>
+          <span>Frenzy every 1000 score for 5s</span>
           <span><kbd>Enter</kbd> Restart</span>
         </div>
       </header>
+
+      <section class="space-art" aria-hidden="true">
+        <div class="planet planet-a"></div>
+        <div class="planet planet-b"></div>
+        <div class="comet comet-a"></div>
+        <div class="comet comet-b"></div>
+        <div class="signal-grid"></div>
+      </section>
 
       <section class="game-shell" aria-label="Asteroids game area">
         <div class="hud" role="status" aria-live="polite">
@@ -38,12 +48,37 @@
         </div>
         <canvas id="gameCanvas" width="960" height="540"></canvas>
 
+        <div class="start-screen" id="startScreen">
+          <p class="start-tag">Mission Control</p>
+          <h2>Ready To Launch?</h2>
+          <p>Press Start, Enter, or Space to begin your run.</p>
+          <button id="startBtn" type="button">Start Game</button>
+        </div>
+
         <div class="mobile-controls" aria-label="Touch controls">
           <button id="leftBtn" type="button" aria-label="Rotate left">⟲</button>
           <button id="thrustBtn" type="button" aria-label="Thrust">▲</button>
           <button id="rightBtn" type="button" aria-label="Rotate right">⟳</button>
           <button id="fireBtn" type="button" aria-label="Shoot">FIRE</button>
         </div>
+      </section>
+
+      <section class="story-panel" aria-label="Game background story">
+        <p class="story-label">Background Story</p>
+        <h2>Echoes Of The Drift Belt</h2>
+        <p>
+          In 2189, the Helios Relay around Neptune went silent after a chain of mining detonations ripped
+          through the Drift Belt. You are Commander Kim, the last pilot cleared for deep-void recovery,
+          flying a patched Orbital frame with twin missile launchers and a hull held together by luck.
+        </p>
+        <p>
+          Every asteroid you break reveals encrypted fragments from the lost relay. Reach each new thousand
+          points and your weapons surge into frenzy protocol for ten seconds, burning through debris while
+          the signal locks in. The relay logs also describe a forbidden time-travel drive called the Chrono
+          Anchor, a prototype that can rewind local reality by a few moments. Survive long enough and you
+          might recover the final transmission, jump backward through the blast, and learn who sabotaged the
+          belt before it ever happened.
+        </p>
       </section>
     </main>
 

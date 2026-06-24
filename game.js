@@ -10,22 +10,32 @@ const leftBtn = document.getElementById("leftBtn");
 const rightBtn = document.getElementById("rightBtn");
 const thrustBtn = document.getElementById("thrustBtn");
 const fireBtn = document.getElementById("fireBtn");
+const startScreen = document.getElementById("startScreen");
+const startBtn = document.getElementById("startBtn");
 
 const WIDTH = canvas.width;
 const HEIGHT = canvas.height;
 
 const SHIP_SIZE = 13;
-const SHIP_THRUST = 0.18;
+const SHIP_THRUST = 0.10;
 const SHIP_FRICTION = 0.985;
 const SHIP_TURN_SPEED = 0.15;
 const MAX_SHIP_SPEED = 5.8;
 const BULLET_SPEED = 8;
 const BULLET_LIFETIME = 66;
-const BULLET_COOLDOWN = 165;
+const BULLET_COOLDOWN = 95;
+const FRENZY_DURATION_MS = 5000;
+const FRENZY_FIRE_INTERVAL = 48;
 const ASTEROID_BASE_SPEED = 1.2;
 const INVULN_MS = 2200;
 const BLINK_MS = 120;
-const PLAYER_NAME = "KIM SOLEUM";
+const SHIELD_DURATION_MS = 5000;
+const SHIELD_PICKUP_RADIUS = 10;
+const SHIELD_PICKUP_LIFETIME = 720;
+const SHIELD_SPAWN_MIN_MS = 9000;
+const SHIELD_SPAWN_MAX_MS = 14000;
+const SHOT_SOUND_MIN_INTERVAL_MS = 55;
+const MUSIC_STEP_MS = 300;
 
 const ASTEROID_TYPES = {
   common: { health: 1, color: "#79f2ff", accent: "#d8fdff", hitScore: 6, destroyBonus: 0 },
@@ -94,6 +104,7 @@ let asteroids = [];
 let particles = [];
 let stars = [];
 let shootingStars = [];
+let shieldPickups = [];
 let planet;
 let currentTheme = LEVEL_THEMES[0];
 
@@ -101,18 +112,200 @@ let score = 0;
 let lives = 3;
 let level = 1;
 let gameOver = false;
+let gameStarted = false;
 let canShootAt = 0;
+let frenzyUntil = 0;
+let nextFrenzyScore = 1000;
+let shieldUntil = 0;
+let nextShieldSpawnAt = 0;
 let lastTime = performance.now();
+let audioCtx = null;
+let nextShotSoundAt = 0;
+let musicTimerId = null;
+let musicStep = 0;
 
 const keys = {
   left: false,
   right: false,
   thrust: false,
+  reverseThrust: false,
   fire: false,
 };
 
 function randomBetween(min, max) {
   return Math.random() * (max - min) + min;
+}
+
+function getAudioContext() {
+  if (audioCtx) return audioCtx;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  audioCtx = new AudioContextClass();
+  return audioCtx;
+}
+
+function unlockAudio() {
+  const ac = getAudioContext();
+  if (!ac) return;
+  if (ac.state !== "running") {
+    ac.resume().catch(() => {});
+  }
+}
+
+function playTone({
+  type = "square",
+  freq = 440,
+  endFreq = freq,
+  duration = 0.09,
+  volume = 0.04,
+  attack = 0.004,
+  release = 0.06,
+}) {
+  const ac = getAudioContext();
+  if (!ac || ac.state !== "running") return;
+
+  const now = ac.currentTime;
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, now);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + duration);
+
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.linearRampToValueAtTime(volume, now + attack);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration + release);
+
+  osc.connect(gain);
+  gain.connect(ac.destination);
+
+  osc.start(now);
+  osc.stop(now + duration + release + 0.01);
+}
+
+function playShotSound() {
+  const now = performance.now();
+  if (now < nextShotSoundAt) return;
+  nextShotSoundAt = now + SHOT_SOUND_MIN_INTERVAL_MS;
+  playTone({ type: "square", freq: 620, endFreq: 420, duration: 0.05, volume: 0.028, release: 0.04 });
+}
+
+function playAsteroidHitSound() {
+  playTone({ type: "triangle", freq: 300, endFreq: 180, duration: 0.07, volume: 0.03, release: 0.05 });
+}
+
+function playAsteroidBreakSound() {
+  playTone({ type: "sawtooth", freq: 190, endFreq: 78, duration: 0.12, volume: 0.035, release: 0.08 });
+}
+
+function playShieldPickupSound() {
+  playTone({ type: "sine", freq: 540, endFreq: 880, duration: 0.11, volume: 0.035, release: 0.06 });
+  playTone({ type: "triangle", freq: 740, endFreq: 1120, duration: 0.09, volume: 0.02, release: 0.06 });
+}
+
+function playDamageSound() {
+  playTone({ type: "sawtooth", freq: 240, endFreq: 95, duration: 0.16, volume: 0.04, release: 0.1 });
+}
+
+function playLevelUpSound() {
+  playTone({ type: "triangle", freq: 360, endFreq: 720, duration: 0.1, volume: 0.028, release: 0.05 });
+}
+
+function playGameOverSound() {
+  playTone({ type: "square", freq: 190, endFreq: 60, duration: 0.26, volume: 0.045, release: 0.15 });
+}
+
+function pitchShift(baseFreq, semitones) {
+  return baseFreq * 2 ** (semitones / 12);
+}
+
+function tickSynthMusic() {
+  if (!gameStarted || gameOver) return;
+
+  const progression = [
+    { root: 196.0, bass: 98.0, chordSemitones: [0, 4, 7, 11] },
+    { root: 220.0, bass: 110.0, chordSemitones: [0, 4, 7, 11] },
+    { root: 246.94, bass: 123.47, chordSemitones: [0, 4, 7, 10] },
+    { root: 174.61, bass: 87.31, chordSemitones: [0, 3, 7, 10] },
+  ];
+  const leadPattern = [7, null, 11, null, 12, null, 11, null, 7, null, 4, null, 2, null, 4, null];
+  const sparklePattern = [12, 7, 11, 7, 9, 7, 4, 7];
+
+  const barIndex = Math.floor(musicStep / 16) % progression.length;
+  const stepInBar = musicStep % 16;
+  const sparkleStep = musicStep % 8;
+  const section = progression[barIndex];
+  const leadOffset = leadPattern[stepInBar];
+
+  if (stepInBar === 0 || stepInBar === 8) {
+    for (const semi of section.chordSemitones) {
+      const note = pitchShift(section.root, semi);
+      playTone({
+        type: "sine",
+        freq: note,
+        endFreq: note * 1.002,
+        duration: 1.15,
+        volume: 0.0065,
+        attack: 0.12,
+        release: 0.34,
+      });
+    }
+  }
+
+  if (stepInBar % 8 === 0) {
+    playTone({
+      type: "triangle",
+      freq: section.bass,
+      endFreq: section.bass * 0.992,
+      duration: 0.6,
+      volume: 0.013,
+      attack: 0.04,
+      release: 0.28,
+    });
+  }
+
+  if (stepInBar % 4 === 2) {
+    const sparkleSemi = sparklePattern[sparkleStep];
+    const sparkle = pitchShift(section.root, sparkleSemi);
+    playTone({
+      type: "sine",
+      freq: sparkle,
+      endFreq: sparkle * 1.003,
+      duration: 0.18,
+      volume: 0.006,
+      attack: 0.03,
+      release: 0.12,
+    });
+  }
+
+  if (leadOffset !== null) {
+    const lead = pitchShift(section.root, leadOffset);
+    playTone({
+      type: "sine",
+      freq: lead,
+      endFreq: lead * 1.002,
+      duration: 0.32,
+      volume: 0.0075,
+      attack: 0.05,
+      release: 0.16,
+    });
+  }
+
+  musicStep += 1;
+}
+
+function startSynthMusic() {
+  unlockAudio();
+  if (musicTimerId || !gameStarted || gameOver) return;
+  musicStep = 0;
+  tickSynthMusic();
+  musicTimerId = window.setInterval(tickSynthMusic, MUSIC_STEP_MS);
+}
+
+function stopSynthMusic() {
+  if (!musicTimerId) return;
+  window.clearInterval(musicTimerId);
+  musicTimerId = null;
 }
 
 function wrap(obj) {
@@ -203,7 +396,7 @@ function spawnAsteroids(count) {
       x = randomBetween(0, WIDTH);
       y = randomBetween(0, HEIGHT);
     } while (Math.hypot(x - ship.x, y - ship.y) < 160);
-    next.push(createAsteroid(x, y, randomBetween(36, 55)));
+    next.push(createAsteroid(x, y, randomBetween(44, 62)));
   }
   asteroids = next;
 }
@@ -244,6 +437,29 @@ function spawnShootingStar(initial = false) {
   };
 }
 
+function queueNextShieldSpawn(now = performance.now()) {
+  nextShieldSpawnAt = now + randomBetween(SHIELD_SPAWN_MIN_MS, SHIELD_SPAWN_MAX_MS);
+}
+
+function spawnShieldPickup() {
+  let x;
+  let y;
+  do {
+    x = randomBetween(30, WIDTH - 30);
+    y = randomBetween(30, HEIGHT - 30);
+  } while (Math.hypot(x - ship.x, y - ship.y) < 140);
+
+  shieldPickups.push({
+    x,
+    y,
+    vx: randomBetween(-0.35, 0.35),
+    vy: randomBetween(-0.35, 0.35),
+    r: SHIELD_PICKUP_RADIUS,
+    life: SHIELD_PICKUP_LIFETIME,
+    phase: randomBetween(0, Math.PI * 2),
+  });
+}
+
 function updateShootingStars(dt) {
   for (let i = 0; i < shootingStars.length; i += 1) {
     const star = shootingStars[i];
@@ -265,17 +481,30 @@ function updateShootingStars(dt) {
   }
 }
 
-function fireBullet() {
-  if (performance.now() < canShootAt || gameOver) return;
-  canShootAt = performance.now() + BULLET_COOLDOWN;
+function fireBullet(cooldown = BULLET_COOLDOWN) {
+  const now = performance.now();
+  if (now < canShootAt || gameOver) return;
+  canShootAt = now + cooldown;
 
-  bullets.push({
-    x: ship.x + Math.cos(ship.angle) * SHIP_SIZE * 1.4,
-    y: ship.y + Math.sin(ship.angle) * SHIP_SIZE * 1.4,
-    vx: ship.vx + Math.cos(ship.angle) * BULLET_SPEED,
-    vy: ship.vy + Math.sin(ship.angle) * BULLET_SPEED,
-    life: BULLET_LIFETIME,
-  });
+  const dirX = Math.cos(ship.angle);
+  const dirY = Math.sin(ship.angle);
+  const sideX = -dirY;
+  const sideY = dirX;
+  const forwardOffset = SHIP_SIZE * 1.35;
+  const sideOffset = SHIP_SIZE * 0.46;
+
+  const launcherOffsets = [-sideOffset, sideOffset];
+  for (const offset of launcherOffsets) {
+    bullets.push({
+      x: ship.x + dirX * forwardOffset + sideX * offset,
+      y: ship.y + dirY * forwardOffset + sideY * offset,
+      vx: ship.vx + dirX * BULLET_SPEED,
+      vy: ship.vy + dirY * BULLET_SPEED,
+      life: BULLET_LIFETIME,
+    });
+  }
+
+  playShotSound();
 }
 
 function explode(x, y, amount = 16, color = "#ffd166") {
@@ -302,6 +531,7 @@ function splitAsteroid(index) {
 
   if (asteroid.health > 0) {
     explode(asteroid.x, asteroid.y, 8, definition.accent);
+    playAsteroidHitSound();
     return;
   }
 
@@ -336,16 +566,20 @@ function splitAsteroid(index) {
   }
 
   explode(asteroid.x, asteroid.y, 18, definition.color);
+  playAsteroidBreakSound();
   asteroids.splice(index, 1);
 }
 
 function loseLife() {
   lives -= 1;
   explode(ship.x, ship.y, 32, "#ff6f91");
+  playDamageSound();
 
   if (lives <= 0) {
     gameOver = true;
-    statusEl.textContent = "Game Over. Press Enter to restart.";
+    statusEl.textContent = "Try again and go back in time by pressing Enter.";
+    playGameOverSound();
+    stopSynthMusic();
     return;
   }
 
@@ -358,6 +592,7 @@ function nextLevelIfNeeded() {
   level += 1;
   setupLevelBackground();
   statusEl.textContent = `Wave ${level} incoming. Theme: ${currentTheme.name}`;
+  playLevelUpSound();
   spawnAsteroids(getAsteroidSpawnCount());
 }
 
@@ -366,29 +601,63 @@ function resetGame() {
   bullets = [];
   asteroids = [];
   particles = [];
+  shieldPickups = [];
   score = 0;
   lives = 3;
   level = 1;
   gameOver = false;
   canShootAt = 0;
+  frenzyUntil = 0;
+  nextFrenzyScore = 1000;
+  shieldUntil = 0;
+  queueNextShieldSpawn();
   setupLevelBackground();
   statusEl.textContent = `Clear the field. Theme: ${currentTheme.name}`;
   spawnAsteroids(getAsteroidSpawnCount());
+  startSynthMusic();
 }
 
-function polygonHitTest(px, py, asteroid) {
-  return Math.hypot(px - asteroid.x, py - asteroid.y) < asteroid.radius;
+function clearInputState() {
+  keys.left = false;
+  keys.right = false;
+  keys.thrust = false;
+  keys.reverseThrust = false;
+  keys.fire = false;
+}
+
+function showStartScreen() {
+  gameStarted = false;
+  clearInputState();
+  stopSynthMusic();
+  statusEl.textContent = "Press Start to launch.";
+  if (startScreen) startScreen.hidden = false;
+}
+
+function startGame() {
+  if (gameStarted) return;
+  unlockAudio();
+  gameStarted = true;
+  clearInputState();
+  if (startScreen) startScreen.hidden = true;
+  resetGame();
+  startSynthMusic();
 }
 
 function update(dt) {
-  if (!gameOver) {
-    if (keys.left) ship.angle -= SHIP_TURN_SPEED * dt;
-    if (keys.right) ship.angle += SHIP_TURN_SPEED * dt;
+  const now = performance.now();
 
-    if (keys.thrust) {
-      ship.vx += Math.cos(ship.angle) * SHIP_THRUST * dt;
-      ship.vy += Math.sin(ship.angle) * SHIP_THRUST * dt;
-    }
+  if (!gameStarted) {
+    scoreEl.textContent = String(score);
+    livesEl.textContent = String(lives);
+    levelEl.textContent = String(level);
+    return;
+  }
+
+  if (!gameOver) {
+    if (keys.left) ship.vx -= SHIP_THRUST * dt;
+    if (keys.right) ship.vx += SHIP_THRUST * dt;
+    if (keys.thrust) ship.vy -= SHIP_THRUST * dt;
+    if (keys.reverseThrust) ship.vy += SHIP_THRUST * dt;
 
     const speed = Math.hypot(ship.vx, ship.vy);
     if (speed > MAX_SHIP_SPEED) {
@@ -398,6 +667,12 @@ function update(dt) {
 
     ship.vx *= SHIP_FRICTION;
     ship.vy *= SHIP_FRICTION;
+
+    const movementSpeed = Math.hypot(ship.vx, ship.vy);
+    if (movementSpeed > 0.02) {
+      ship.angle = Math.atan2(ship.vy, ship.vx);
+    }
+
     ship.x += ship.vx * dt;
     ship.y += ship.vy * dt;
     wrap(ship);
@@ -410,7 +685,10 @@ function update(dt) {
     bullet.x += bullet.vx * dt;
     bullet.y += bullet.vy * dt;
     bullet.life -= dt;
-    wrap(bullet);
+
+    if (bullet.x < 0 || bullet.x > WIDTH || bullet.y < 0 || bullet.y > HEIGHT) {
+      bullet.life = 0;
+    }
   }
 
   for (const asteroid of asteroids) {
@@ -427,11 +705,37 @@ function update(dt) {
     p.life -= dt;
   }
 
+  shieldPickups = shieldPickups.filter((pickup) => pickup.life > 0);
+  for (const pickup of shieldPickups) {
+    pickup.x += pickup.vx * dt;
+    pickup.y += pickup.vy * dt;
+    pickup.life -= dt;
+    pickup.phase += 0.06 * dt;
+    wrap(pickup);
+  }
+
+  if (!gameOver && shieldPickups.length === 0 && now >= nextShieldSpawnAt) {
+    spawnShieldPickup();
+    queueNextShieldSpawn(now);
+  }
+
+  for (let i = shieldPickups.length - 1; i >= 0; i -= 1) {
+    const pickup = shieldPickups[i];
+    if (Math.hypot(ship.x - pickup.x, ship.y - pickup.y) < SHIP_SIZE + pickup.r + 3) {
+      shieldPickups.splice(i, 1);
+      shieldUntil = Math.max(shieldUntil, now + SHIELD_DURATION_MS);
+      statusEl.textContent = "Shield online: immunity for 5 seconds.";
+      explode(ship.x, ship.y, 12, "#79f2ff");
+      playShieldPickupSound();
+      queueNextShieldSpawn(now);
+    }
+  }
+
   updateShootingStars(dt);
 
   for (let i = bullets.length - 1; i >= 0; i -= 1) {
     for (let j = asteroids.length - 1; j >= 0; j -= 1) {
-      if (polygonHitTest(bullets[i].x, bullets[i].y, asteroids[j])) {
+      if (Math.hypot(bullets[i].x - asteroids[j].x, bullets[i].y - asteroids[j].y) < asteroids[j].radius + 3) {
         bullets.splice(i, 1);
         splitAsteroid(j);
         break;
@@ -439,7 +743,16 @@ function update(dt) {
     }
   }
 
-  const invulnerable = performance.now() < ship.invulnerableUntil;
+  while (score >= nextFrenzyScore) {
+    frenzyUntil = now + FRENZY_DURATION_MS;
+    nextFrenzyScore += 1000;
+  }
+
+  if (!gameOver && now < frenzyUntil) {
+    fireBullet(FRENZY_FIRE_INTERVAL);
+  }
+
+  const invulnerable = now < ship.invulnerableUntil || now < shieldUntil;
   if (!gameOver && !invulnerable) {
     for (const asteroid of asteroids) {
       if (Math.hypot(ship.x - asteroid.x, ship.y - asteroid.y) < asteroid.radius + SHIP_SIZE * 0.85) {
@@ -519,12 +832,23 @@ function drawShip(now) {
 
   ctx.restore();
 
+  if (now < shieldUntil) {
+    const pulse = 0.65 + Math.sin(now * 0.012) * 0.2;
+    ctx.save();
+    ctx.strokeStyle = `rgba(121, 242, 255, ${pulse})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(ship.x, ship.y, SHIP_SIZE + 7, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(246, 242, 220, 0.32)";
+    ctx.beginPath();
+    ctx.arc(ship.x, ship.y, SHIP_SIZE + 10, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   ctx.save();
   ctx.translate(ship.x, ship.y);
-  ctx.fillStyle = "rgba(246, 242, 220, 0.9)";
-  ctx.font = "700 10px Space Mono";
-  ctx.textAlign = "center";
-  ctx.fillText(PLAYER_NAME, 0, SHIP_SIZE + 17);
   ctx.restore();
 }
 
@@ -637,6 +961,25 @@ function draw(now) {
     ctx.fill();
   }
 
+  for (const pickup of shieldPickups) {
+    const glow = 0.28 + Math.abs(Math.sin(pickup.phase)) * 0.35;
+    ctx.fillStyle = `rgba(121, 242, 255, ${glow})`;
+    ctx.beginPath();
+    ctx.arc(pickup.x, pickup.y, pickup.r + 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(246, 242, 220, 0.95)";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(pickup.x, pickup.y, pickup.r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(121, 242, 255, 0.92)";
+    ctx.beginPath();
+    ctx.arc(pickup.x, pickup.y, pickup.r * 0.55, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   for (const p of particles) {
     const alpha = Math.max(0, p.life / p.maxLife);
     ctx.fillStyle = `${p.color}${Math.round(alpha * 255)
@@ -650,13 +993,101 @@ function draw(now) {
   if (gameOver) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    ctx.save();
+    ctx.translate(WIDTH / 2 - 190, HEIGHT / 2 + 10);
+    ctx.rotate(-0.22);
+
+    // Handheld clock body glow.
+    const clockGlow = ctx.createRadialGradient(0, 0, 12, 0, 0, 98);
+    clockGlow.addColorStop(0, "rgba(255, 209, 102, 0.28)");
+    clockGlow.addColorStop(1, "rgba(255, 209, 102, 0)");
+    ctx.fillStyle = clockGlow;
+    ctx.beginPath();
+    ctx.arc(0, 0, 98, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Clock casing.
+    ctx.fillStyle = "rgba(10, 15, 30, 0.72)";
+    ctx.strokeStyle = "rgba(255, 209, 102, 0.84)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, 66, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Crown and handheld ring.
+    ctx.fillStyle = "rgba(255, 209, 102, 0.75)";
+    ctx.beginPath();
+    ctx.arc(0, -79, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(246, 242, 220, 0.78)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, -96, 12, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Face and hour ticks.
+    ctx.fillStyle = "rgba(246, 242, 220, 0.09)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 54, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(121, 242, 255, 0.5)";
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 12; i += 1) {
+      const angle = (Math.PI * 2 * i) / 12;
+      const x0 = Math.cos(angle) * 42;
+      const y0 = Math.sin(angle) * 42;
+      const x1 = Math.cos(angle) * 50;
+      const y1 = Math.sin(angle) * 50;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+    }
+
+    // Clock hands with slow drift to feel alive.
+    const secondAngle = now * 0.003;
+    const minuteAngle = now * 0.00035;
+    ctx.strokeStyle = "rgba(246, 242, 220, 0.95)";
+    ctx.lineCap = "round";
+
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(minuteAngle) * 26, Math.sin(minuteAngle) * 26);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255, 111, 145, 0.92)";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(secondAngle) * 40, Math.sin(secondAngle) * 40);
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(255, 209, 102, 0.96)";
+    ctx.beginPath();
+    ctx.arc(0, 0, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Handle silhouette so it reads as handheld.
+    ctx.fillStyle = "rgba(246, 242, 220, 0.13)";
+    ctx.beginPath();
+    ctx.moveTo(58, 50);
+    ctx.quadraticCurveTo(104, 66, 122, 102);
+    ctx.quadraticCurveTo(98, 111, 72, 86);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+
     ctx.fillStyle = "#ffd166";
     ctx.textAlign = "center";
     ctx.font = "700 42px Audiowide";
     ctx.fillText("GAME OVER", WIDTH / 2, HEIGHT / 2 - 8);
     ctx.fillStyle = "#f6f2dc";
     ctx.font = "400 20px Space Mono";
-    ctx.fillText("Press Enter to launch again", WIDTH / 2, HEIGHT / 2 + 34);
+    ctx.fillText("Try again and go back in time by pressing Enter", WIDTH / 2, HEIGHT / 2 + 34);
   }
 }
 
@@ -673,6 +1104,7 @@ function loop(now) {
 function setButtonHold(button, keyName) {
   const start = (event) => {
     event.preventDefault();
+    unlockAudio();
     keys[keyName] = true;
   };
   const stop = (event) => {
@@ -686,22 +1118,65 @@ function setButtonHold(button, keyName) {
   button.addEventListener("pointercancel", stop);
 }
 
+const SCROLL_BLOCK_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"]);
+
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (SCROLL_BLOCK_KEYS.has(event.code)) {
+      event.preventDefault();
+    }
+  },
+  { capture: true }
+);
+
+document.addEventListener(
+  "keyup",
+  (event) => {
+    if (SCROLL_BLOCK_KEYS.has(event.code)) {
+      event.preventDefault();
+    }
+  },
+  { capture: true }
+);
+
 window.addEventListener("keydown", (event) => {
+  unlockAudio();
   if (event.repeat) return;
 
+  if (!gameStarted && (event.code === "Enter" || event.code === "Space")) {
+    event.preventDefault();
+    startGame();
+    return;
+  }
+
   if (
+    event.code === "Numpad4" ||
+    event.code === "Numpad6" ||
     event.code === "ArrowLeft" ||
     event.code === "ArrowRight" ||
     event.code === "ArrowUp" ||
-    event.code === "ArrowDown"
+    event.code === "ArrowDown" ||
+    event.code === "KeyW" ||
+    event.code === "KeyA" ||
+    event.code === "KeyS" ||
+    event.code === "KeyD" ||
+    event.code === "Space"
   ) {
     event.preventDefault();
   }
 
-  if (event.code === "KeyA" || event.code === "ArrowLeft") keys.left = true;
-  if (event.code === "KeyD" || event.code === "ArrowRight") keys.right = true;
-  if (event.code === "KeyW" || event.code === "ArrowUp") keys.thrust = true;
-  if (event.code === "Space" || event.code === "ArrowDown") {
+  if (event.code === "Numpad4") keys.left = true;
+  if (event.code === "Numpad6") keys.right = true;
+  if (event.code === "ArrowLeft") keys.left = true;
+  if (event.code === "ArrowRight") keys.right = true;
+  if (event.code === "ArrowUp") keys.thrust = true;
+  if (event.code === "ArrowDown") keys.reverseThrust = true;
+  if (event.code === "KeyW") keys.thrust = true;
+  if (event.code === "KeyS") keys.reverseThrust = true;
+  if (event.code === "KeyA") keys.left = true;
+  if (event.code === "KeyD") keys.right = true;
+  if (event.code === "Space") {
     event.preventDefault();
     keys.fire = true;
     fireBullet();
@@ -713,18 +1188,32 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("keyup", (event) => {
   if (
+    event.code === "Numpad4" ||
+    event.code === "Numpad6" ||
     event.code === "ArrowLeft" ||
     event.code === "ArrowRight" ||
     event.code === "ArrowUp" ||
-    event.code === "ArrowDown"
+    event.code === "ArrowDown" ||
+    event.code === "KeyW" ||
+    event.code === "KeyA" ||
+    event.code === "KeyS" ||
+    event.code === "KeyD" ||
+    event.code === "Space"
   ) {
     event.preventDefault();
   }
 
-  if (event.code === "KeyA" || event.code === "ArrowLeft") keys.left = false;
-  if (event.code === "KeyD" || event.code === "ArrowRight") keys.right = false;
-  if (event.code === "KeyW" || event.code === "ArrowUp") keys.thrust = false;
-  if (event.code === "Space" || event.code === "ArrowDown") keys.fire = false;
+  if (event.code === "Numpad4") keys.left = false;
+  if (event.code === "Numpad6") keys.right = false;
+  if (event.code === "ArrowLeft") keys.left = false;
+  if (event.code === "ArrowRight") keys.right = false;
+  if (event.code === "ArrowUp") keys.thrust = false;
+  if (event.code === "ArrowDown") keys.reverseThrust = false;
+  if (event.code === "KeyW") keys.thrust = false;
+  if (event.code === "KeyS") keys.reverseThrust = false;
+  if (event.code === "KeyA") keys.left = false;
+  if (event.code === "KeyD") keys.right = false;
+  if (event.code === "Space") keys.fire = false;
 });
 
 setButtonHold(leftBtn, "left");
@@ -733,6 +1222,7 @@ setButtonHold(thrustBtn, "thrust");
 
 fireBtn.addEventListener("pointerdown", (event) => {
   event.preventDefault();
+  unlockAudio();
   keys.fire = true;
   fireBullet();
 });
@@ -746,5 +1236,13 @@ fireBtn.addEventListener("pointerleave", () => {
   keys.fire = false;
 });
 
+if (startBtn) {
+  startBtn.addEventListener("click", () => {
+    unlockAudio();
+    startGame();
+  });
+}
+
 resetGame();
+showStartScreen();
 requestAnimationFrame(loop);
