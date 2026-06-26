@@ -577,7 +577,7 @@ function loseLife() {
 
   if (lives <= 0) {
     gameOver = true;
-    statusEl.textContent = "Try again and go back in time by pressing Enter.";
+    statusEl.textContent = "regress back in time by pressing enter";
     playGameOverSound();
     stopSynthMusic();
     return;
@@ -1087,7 +1087,7 @@ function draw(now) {
     ctx.fillText("GAME OVER", WIDTH / 2, HEIGHT / 2 - 8);
     ctx.fillStyle = "#f6f2dc";
     ctx.font = "400 20px Space Mono";
-    ctx.fillText("Try again and go back in time by pressing Enter", WIDTH / 2, HEIGHT / 2 + 34);
+    ctx.fillText("regress back in time by pressing enter", WIDTH / 2, HEIGHT / 2 + 34);
   }
 }
 
